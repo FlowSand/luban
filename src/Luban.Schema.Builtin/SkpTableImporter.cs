@@ -1,0 +1,106 @@
+using Luban.Defs;
+using Luban.RawDefs;
+using Luban.Utils;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Threading.Tasks;
+
+namespace Luban.Schema.Builtin;
+
+[TableImporter("skp")]
+public class SkpTableImporter : ITableImporter
+{
+    private static readonly NLog.Logger s_logger = NLog.LogManager.GetCurrentClassLogger();
+
+    private static string ConvertToUpperCamelCase(string snakeCaseString)
+    {
+        if (string.IsNullOrEmpty(snakeCaseString))
+        {
+            return snakeCaseString;
+        }
+
+        // Split by underscore
+        string[] parts = snakeCaseString.Split('_');
+        
+        // Capitalize first letter of each part
+        for (int i = 0; i < parts.Length; i++)
+        {
+            if (!string.IsNullOrEmpty(parts[i]))
+            {
+                parts[i] = char.ToUpperInvariant(parts[i][0]) + (parts[i].Length > 1 ? parts[i].Substring(1) : "");
+            }
+        }
+
+        // Join all parts
+        return string.Join("", parts);
+    }
+
+    public List<RawTable> LoadImportTables()
+    {
+        string dataDir = Directory.GetParent(GenerationContext.GlobalConf.InputDataDir).FullName;
+
+        string fileNamePatternStr = EnvManager.Current.GetOptionOrDefault("tableImporter", "filePattern", false, "(.*)");
+        string tableNamespaceFormatStr = EnvManager.Current.GetOptionOrDefault("tableImporter", "tableNamespaceFormat", false, "{0}");
+        string tableNameFormatStr = EnvManager.Current.GetOptionOrDefault("tableImporter", "tableNameFormat", false, "Tb{0}");
+        string valueTypeNameFormatStr = EnvManager.Current.GetOptionOrDefault("tableImporter", "valueTypeNameFormat", false, "{0}Entry");
+        var fileNamePattern = new Regex(fileNamePatternStr);
+        var excelExts = new HashSet<string> { "xlsx", "xls", "xlsm", "csv" };
+
+        var tables = new List<RawTable>();
+        foreach (string file in Directory.GetFiles(dataDir, "*", SearchOption.AllDirectories))
+        {
+            if (FileUtil.IsIgnoreFile(dataDir, file) )
+            {
+                continue;
+            }
+            string fileName = Path.GetFileName(file);
+            string ext = Path.GetExtension(fileName).TrimStart('.');
+            if (!excelExts.Contains(ext) || fileName.StartsWith("#"))
+            {
+                continue;
+            }
+            string fileNameWithoutExt = Path.GetFileNameWithoutExtension(fileName);
+            var match = fileNamePattern.Match(fileNameWithoutExt);
+            if (!match.Success || match.Groups.Count <= 1)
+            {
+                continue;
+            }
+
+            string relativePath = file.Substring(dataDir.Length + 1).TrimStart('\\').TrimStart('/');
+            string namespaceFromRelativePath = ""; // Path.GetDirectoryName(relativePath).Replace('/', '.').Replace('\\', '.');
+
+            string rawTableFullName = match.Groups[1].Value;
+            string rawTableNamespace = TypeUtil.GetNamespace(rawTableFullName);
+            string rawTableName = TypeUtil.GetName(rawTableFullName);
+
+            // Convert from snake_case to PascalCase
+            string formattedRawTableName = ConvertToUpperCamelCase(rawTableName);
+
+            string tableNamespace = TypeUtil.MakeFullName(namespaceFromRelativePath, string.Format(tableNamespaceFormatStr, rawTableNamespace));
+            string tableName = string.Format(tableNameFormatStr, formattedRawTableName);
+            string valueTypeFullName = TypeUtil.MakeFullName(tableNamespace, string.Format(valueTypeNameFormatStr, formattedRawTableName));
+
+            var table = new RawTable()
+            {
+                Namespace = tableNamespace,
+                Name = tableName,
+                Index = "",
+                ValueType = valueTypeFullName,
+                ReadSchemaFromFile = true,
+                Mode = TableMode.MAP,
+                Comment = "",
+                Groups = new List<string> { },
+                InputFiles = new List<string> { relativePath },
+                OutputFile = "",
+            };
+            s_logger.Debug("import table file:{@}", table);
+            tables.Add(table);
+        }
+
+
+        return tables;
+    }
+}
