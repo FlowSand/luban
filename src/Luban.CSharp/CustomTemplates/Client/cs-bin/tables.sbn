@@ -15,9 +15,26 @@ public partial class {{__name}}
     public {{__name}}(System.Func<string, ByteBuf> loader)
     {
         {{~for table in __tables ~}}
-        {{format_property_name __code_style table.name}} = new {{table.full_name}}(loader("{{table.output_data_file}}"));
+        {{format_property_name __code_style table.name}} = new {{table.full_name}}(LoadTableBuf(loader, "{{table.output_data_file}}", nameof({{format_property_name __code_style table.name}})));
         {{~end~}}
         ResolveRef();
+    }
+
+    private static ByteBuf LoadTableBuf(System.Func<string, ByteBuf> loader, string file, string tableName)
+    {
+        try
+        {
+            return loader(file);
+        }
+        catch (System.Exception e)
+        {
+#if UNITY_EDITOR
+            UnityEngine.Debug.LogError($"[Luban] Load table {tableName}({file}) failed\n{e}");
+            return null;
+#else
+            throw;
+#endif
+        }
     }
     
     private void ResolveRef()
